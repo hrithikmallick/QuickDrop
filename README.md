@@ -1,52 +1,134 @@
+<div align="center">
+
 # QuickDrop
 
-Temporary private file sharing on Cloudflare.
+Private, temporary file sharing built entirely on Cloudflare.
 
-Uploaders sign in. Downloaders use a link. Files expire automatically or after their first download. The R2 bucket stays private.
+Upload directly to R2, share an expiring link, and optionally make it disappear after the first download starts.
 
-## Stack
+**[Open QuickDrop](https://quickdrop-production.hrithikmallick-work.workers.dev/login)** · [Technical documentation](docs/TECHNICAL_DOCUMENTATION.md)
 
-- Frontend: React + Vite + TypeScript
-- Backend: Python 3.13 + FastAPI on Cloudflare Python Workers
-- Database: Cloudflare D1
-- Storage: Cloudflare R2
-- Cleanup: Cloudflare Cron (`0 * * * *`)
-- Auth: Google OIDC, plus a local dev login
-- Tools: `uv` + `pywrangler`
+</div>
 
-The Worker entrypoint is:
+## Features
+
+- Google sign-in for uploaders
+- Public downloads without an account
+- Drag-and-drop or file-picker uploads
+- Direct browser-to-R2 production uploads with progress
+- Private R2 bucket and server-generated object keys
+- Expiry choices: 1 hour, 6 hours, 24 hours, 3 days, or 7 days
+- Optional one-time share links
+- 500 MiB per-user quota and 500 MiB single-file limit
+- Automatic R2 cleanup and quota reclamation through Cron
+- Responsive login, dashboard, and public download pages
+
+## Architecture
+
+```text
+React + Vite + TypeScript
+            │
+            ▼
+FastAPI on a Cloudflare Python Worker
+       │                    │
+       ▼                    ▼
+ D1 metadata          Private R2 files
+       │
+       ▼
+ Hourly cleanup Cron
+```
+
+| Component | Technology |
+| --- | --- |
+| Frontend | React 19, Vite 6, TypeScript |
+| Backend | Python 3.13, FastAPI, Cloudflare Workers |
+| Metadata | Cloudflare D1 |
+| File storage | Cloudflare R2 |
+| Authentication | Google OAuth/OIDC |
+| Cleanup | Cloudflare Cron Trigger |
+
+The Worker entrypoint is intentionally small:
 
 ```python
+from app import app
+from workers import asgi
+
 Default = asgi.entrypoint(app)
 ```
 
-Bindings are read from `request.scope["env"]`.
+Cloudflare bindings are available to FastAPI through `request.scope["env"]`.
 
-## Limits
+## How uploads work
 
-- 500 MiB active storage per user
-- 500 MiB max per file
-- Expiry: 1h, 6h, 24h, 3d, 7d (default 24h)
+1. The browser calls `POST /api/uploads/init`.
+2. The Worker authenticates the user and reserves quota in D1.
+3. A `PENDING` file record is created with a server-generated R2 key.
+4. The Worker returns a 15-minute signed R2 PUT URL.
+5. The browser uploads the file directly to R2.
+6. The browser calls `POST /api/uploads/{id}/complete`.
+7. The Worker checks the real R2 object size with `HEAD` and marks the file `ACTIVE`.
+
+The production Worker never proxies the 500 MiB upload body.
+
+## One-time downloads
+
+Selecting **Expire after first download** makes the public share token single-use. The metadata page does not consume it; the token is consumed atomically when the recipient starts the download.
+
+The first request receives an R2 URL valid for at most 60 seconds. Later share-link requests are rejected, and Cron removes the object and reclaims quota after the grace period becomes eligible for cleanup.
+
+## Project structure
+
+```text
+frontend/                 React application
+  src/pages/              Login, dashboard, and download pages
+  src/components/         Shared UI components
+  src/api.ts              Typed API client and upload progress
+migrations/               Ordered D1 migrations
+src/app.py                FastAPI routes and application logic
+src/cleanup.py            Expiration and stale-upload cleanup
+src/constants.py          Limits, TTLs, and file states
+src/db.py                 D1 helpers
+src/r2util.py             R2 operations and signed URLs
+src/worker.py             Worker and scheduled-event entrypoint
+tests/                    Backend unit tests and Cloudflare fakes
+wrangler.jsonc            Worker resources and environments
+```
+
+See [Technical Documentation](docs/TECHNICAL_DOCUMENTATION.md) for the full schema, API reference, state machine, security model, and operations guide.
 
 ## Local development
 
-Install:
+### Prerequisites
+
+- Python 3.13
+- [`uv`](https://docs.astral.sh/uv/)
+- Node.js and npm
+- A Cloudflare/Wrangler-compatible environment
+
+### Install dependencies
 
 ```bash
-# Python toolchain
 uv sync
-
-# Frontend
 npm --prefix frontend install
 ```
 
-Copy secrets:
+### Create local variables
+
+Bash:
 
 ```bash
 cp .dev.vars.example .dev.vars
 ```
 
-Apply D1 migrations and start the Worker:
+PowerShell:
+
+```powershell
+Copy-Item .dev.vars.example .dev.vars
+```
+
+For the built-in local development identity, leave the Google fields empty. The development login creates a provider-neutral `dev` identity and an HttpOnly session.
+
+### Apply migrations, build, and run
 
 ```bash
 uv run pywrangler d1 migrations apply DB --local --env development
@@ -54,111 +136,142 @@ npm --prefix frontend run build
 uv run pywrangler dev --env development
 ```
 
-The Worker serves `/api/*` and the built frontend on `http://localhost:8787`.
+Open `http://localhost:8787`.
 
-Optional frontend-only Vite server with API proxy:
+On Unix-like systems, the convenience script performs those steps:
+
+```bash
+./start.sh
+```
+
+### Optional Vite development server
+
+Run the Worker and frontend in separate terminals:
 
 ```bash
 uv run pywrangler dev --env development
-npm --prefix frontend run dev
+npm run dev:web
 ```
 
-### Local auth
-
-If `GOOGLE_CLIENT_ID` is empty, `/api/auth/google` redirects to `/api/dev/login` in development. That creates a `dev` identity (`provider=dev`, `provider_subject=local-dev-user`) and sets an HttpOnly session cookie.
-
-### Local R2
-
-Wrangler simulates R2 locally. `/api/uploads/init` returns `/api/dev/uploads/{id}` so the browser can PUT the file through the Worker. This path is development-only and capped at 10 MiB.
-
-Production uses short-lived signed PUT URLs so the browser uploads directly to R2.
+Vite runs on `http://localhost:5173` and proxies `/api` to the Worker on port 8787.
 
 ### Local Google OAuth
 
-Set in `.dev.vars`:
+Add credentials to `.dev.vars`:
 
-```bash
+```dotenv
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 APP_ORIGIN=http://localhost:8787
 ```
 
-Authorized redirect URI:
+Configure this Google authorized redirect URI:
 
 ```text
 http://localhost:8787/api/auth/google/callback
 ```
 
-## Production upload flow
+### Local R2 behavior
 
-1. Browser `POST /api/uploads/init`
-2. Worker checks auth and quota, creates a `PENDING` row, reserves quota
-3. Worker returns a signed R2 PUT URL
-4. Browser uploads directly to R2
-5. Browser `POST /api/uploads/{id}/complete`
-6. Worker HEADs the R2 object, validates its actual size and current quota, then marks it `ACTIVE` and moves reserved quota to used quota atomically
+When R2 signing credentials are blank in development, uploads use `/api/dev/uploads/{id}` and the local R2 binding. This fallback is capped at 10 MiB. Production requires signed direct uploads.
 
-Share links store SHA-256 hashes of cryptographically random tokens. Downloads validate the token, file status, and expiry, then redirect to a short-lived signed GET URL. For one-time links, the token is consumed atomically when the first download starts and the object is reclaimed by Cron after the signed URL expires.
+## Configuration
 
-## Cron
+### Worker bindings
 
-Hourly the Worker:
+| Binding | Resource |
+| --- | --- |
+| `DB` | D1 database named `quickdrop` |
+| `FILES` | Private R2 bucket named `quickdrop-files` |
+| `ASSETS` | Compiled files from `frontend/dist` |
 
-- deletes expired R2 objects
-- marks files `EXPIRED`
-- reclaims used quota
-- fails stale `PENDING` uploads
-- releases abandoned reservations
-- deletes expired sessions
+### Required production values
 
-Test it locally after the Worker starts:
+Non-secret variables in `wrangler.jsonc`:
 
-```bash
-curl "http://localhost:8787/cdn-cgi/local/scheduled?format=json"
-```
+- `ENVIRONMENT`
+- `APP_ORIGIN`
+- `R2_ACCOUNT_ID`
+- `R2_BUCKET_NAME`
 
-## Deploy
+Worker secrets:
 
-Create D1 and R2 resources, then replace the placeholder D1 IDs in both the top-level and `env.production` bindings in `wrangler.jsonc`.
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
 
-```bash
-npx wrangler d1 create quickdrop
-npx wrangler r2 bucket create quickdrop-files
-uv run pywrangler d1 migrations apply DB --remote --env production
-npm --prefix frontend run build
-# Fill the git-ignored .env.production.local file, then upload it once:
-npx wrangler secret bulk .env.production.local --env production
-uv run pywrangler deploy --env production
-```
+Never commit `.dev.vars`, `.env.production.local`, or R2 credentials.
 
-`APP_ORIGIN`, `R2_ACCOUNT_ID`, and `R2_BUCKET_NAME` are non-secret production
-variables configured in `wrangler.jsonc`.
+## R2 CORS
 
-Use an R2 API token only for signing. Do not make the bucket public. The R2 Worker binding is named `FILES`.
-
-Copy `r2-cors.example.json`, replace `https://your-domain.example` with the exact production origin (no path or wildcard), then apply and verify it:
+Copy `r2-cors.example.json` to the ignored `r2-cors.json`, replace the placeholder with the exact application origin, then apply it:
 
 ```bash
-cp r2-cors.example.json r2-cors.json
 npx wrangler r2 bucket cors set quickdrop-files --file r2-cors.json
 npx wrangler r2 bucket cors list quickdrop-files
 ```
 
-The policy permits only browser `PUT` uploads with `Content-Type`; signed downloads are normal top-level navigations and do not need permissive bucket CORS.
+The policy permits only browser PUT uploads with `Content-Type`. Keep the bucket private.
 
 ## Tests
 
 ```bash
-uv run pytest
+# Backend tests
+npm test
+
+# TypeScript check and production frontend build
+npm run build:web
+
+# Production Worker packaging check
+npx wrangler deploy --env production --dry-run
 ```
 
-## Schema
+The backend suite covers quota boundaries, token generation and hashing, filename sanitization, signed R2 URLs, cleanup, stale uploads, and atomic one-time download claims.
 
-Provider-neutral auth:
+## Deployment
 
-- `users`
-- `auth_identities` (`user_id`, `provider`, `provider_subject`, `provider_email`)
-- `sessions`
-- `files`
+After creating the D1 database and R2 bucket and configuring `wrangler.jsonc`:
 
-Google OIDC `sub` is stored as `provider_subject`. There is no `google_id` column on `users`.
+```bash
+# Apply schema first
+npx wrangler d1 migrations apply DB --remote --env production
+
+# Build the React application
+npm run build:web
+
+# Upload secrets from the Git-ignored local file
+npx wrangler secret bulk .env.production.local --env production
+
+# Validate and deploy
+npx wrangler deploy --env production --dry-run
+npx wrangler deploy --env production
+```
+
+Verify the release:
+
+```bash
+curl https://quickdrop-production.hrithikmallick-work.workers.dev/api/health
+npx wrangler secret list --env production
+npx wrangler d1 migrations list DB --remote --env production
+```
+
+Detailed resource setup, Windows Python packaging, secret rotation, post-deployment checks, and troubleshooting are documented in the [deployment and operations guide](docs/TECHNICAL_DOCUMENTATION.md#18-production-deployment).
+
+## Security notes
+
+- Session and share-token plaintext values are never stored in D1.
+- Owner-only operations include the authenticated user ID in their database query.
+- SQL uses bound parameters.
+- Filenames are sanitized and never become R2 object paths.
+- The Worker verifies the actual uploaded object size instead of trusting the browser.
+- Signed URLs are short-lived and R2 credentials never reach frontend code.
+
+Review the documented [known limitations and future hardening](docs/TECHNICAL_DOCUMENTATION.md#21-known-limitations-and-future-hardening) before expanding beyond the current deployment.
+
+## Documentation
+
+- [Full technical documentation](docs/TECHNICAL_DOCUMENTATION.md)
+- [Live application](https://quickdrop-production.hrithikmallick-work.workers.dev/login)
+- [Health endpoint](https://quickdrop-production.hrithikmallick-work.workers.dev/api/health)
+
