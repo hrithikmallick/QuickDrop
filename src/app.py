@@ -19,6 +19,7 @@ from constants import (
     SIGNED_GET_TTL_SECONDS,
     SIGNED_PUT_TTL_SECONDS,
     STATUS_ACTIVE,
+    STATUS_CONSUMED,
     STATUS_DELETED,
     STATUS_EXPIRED,
     STATUS_FAILED,
@@ -171,10 +172,11 @@ async def claim_one_time_download(env, row: dict, token_hash: str, now: int, ttl
         env,
         """
         UPDATE files
-        SET expires_at = ?, share_token_hash = NULL, updated_at = ?
+        SET status = ?, expires_at = ?, share_token_hash = NULL, updated_at = ?
         WHERE id = ? AND status = ? AND share_token_hash = ?
           AND (expires_at IS NULL OR expires_at > ?)
         """,
+        STATUS_CONSUMED,
         now + ttl,
         now,
         row["id"],
@@ -454,28 +456,32 @@ async def delete_file(file_id: str, request: Request):
                 """
                 UPDATE users
                 SET storage_used_bytes = MAX(0, storage_used_bytes - COALESCE((
-                        SELECT size_bytes FROM files WHERE id = ? AND user_id = ? AND status = ?
+                        SELECT size_bytes FROM files WHERE id = ? AND user_id = ? AND status IN (?, ?)
                     ), 0)),
                     storage_reserved_bytes = MAX(0, storage_reserved_bytes - COALESCE((
                         SELECT size_bytes FROM files WHERE id = ? AND user_id = ? AND status = ?
                     ), 0)),
                     updated_at = ?
                 WHERE id = ? AND EXISTS (
-                    SELECT 1 FROM files WHERE id = ? AND user_id = ? AND status IN (?, ?)
+                    SELECT 1 FROM files WHERE id = ? AND user_id = ? AND status IN (?, ?, ?)
                 )
                 """,
                 (
-                    file_id, user["id"], STATUS_ACTIVE,
+                    file_id, user["id"], STATUS_ACTIVE, STATUS_CONSUMED,
                     file_id, user["id"], STATUS_PENDING,
                     now, user["id"], file_id, user["id"], STATUS_ACTIVE, STATUS_PENDING,
+                    STATUS_CONSUMED,
                 ),
             ),
             (
                 """
                 UPDATE files SET status = ?, share_token_hash = NULL, updated_at = ?
-                WHERE id = ? AND user_id = ? AND status IN (?, ?) AND changes() = 1
+                WHERE id = ? AND user_id = ? AND status IN (?, ?, ?) AND changes() = 1
                 """,
-                (STATUS_DELETED, now, file_id, user["id"], STATUS_ACTIVE, STATUS_PENDING),
+                (
+                    STATUS_DELETED, now, file_id, user["id"], STATUS_ACTIVE, STATUS_PENDING,
+                    STATUS_CONSUMED,
+                ),
             ),
         ],
     )

@@ -1,7 +1,7 @@
 import asyncio
 
 from cleanup import run_cleanup
-from constants import STATUS_ACTIVE, STATUS_EXPIRED, STATUS_FAILED, STATUS_PENDING
+from constants import STATUS_ACTIVE, STATUS_CONSUMED, STATUS_EXPIRED, STATUS_FAILED, STATUS_PENDING
 from tests.fakes import FakeEnv
 
 
@@ -60,5 +60,33 @@ def test_cleanup_fails_stale_pending_and_releases_reservation():
     assert result["stale_pending"] == 1
     assert env.DB.files["f2"]["status"] == STATUS_FAILED
     assert env.DB.users["u1"]["storage_reserved_bytes"] == 0
+
+
+def test_cleanup_reclaims_consumed_one_time_file():
+    env = FakeEnv()
+    env.DB.users["u1"] = {
+        "id": "u1",
+        "storage_used_bytes": 80,
+        "storage_reserved_bytes": 0,
+        "updated_at": 0,
+    }
+    env.DB.files["f3"] = {
+        "id": "f3",
+        "user_id": "u1",
+        "size_bytes": 80,
+        "r2_key": "k3",
+        "status": STATUS_CONSUMED,
+        "expires_at": 1,
+        "created_at": 1,
+        "share_token_hash": None,
+    }
+    env.FILES.objects["k3"] = b"one-time"
+
+    result = run(run_cleanup(env))
+
+    assert result["expired_files"] == 1
+    assert env.DB.files["f3"]["status"] == STATUS_EXPIRED
+    assert env.DB.users["u1"]["storage_used_bytes"] == 0
+    assert "k3" in env.FILES.deleted
     assert run(run_cleanup(env))["stale_pending"] == 0
     assert env.DB.users["u1"]["storage_reserved_bytes"] == 0

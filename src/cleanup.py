@@ -1,6 +1,7 @@
 from constants import (
     PENDING_TTL_SECONDS,
     STATUS_ACTIVE,
+    STATUS_CONSUMED,
     STATUS_DELETED,
     STATUS_EXPIRED,
     STATUS_FAILED,
@@ -18,19 +19,21 @@ async def _safe_delete_r2(env, key: str) -> None:
         pass
 
 
-async def expire_active_files(env, now: int) -> int:
+async def expire_due_files(env, now: int) -> int:
     rows = await query_all(
         env,
         """
-        SELECT id, user_id, size_bytes, r2_key
+        SELECT id, user_id, size_bytes, r2_key, status
         FROM files
-        WHERE status = ? AND expires_at IS NOT NULL AND expires_at <= ?
+        WHERE status IN (?, ?) AND expires_at IS NOT NULL AND expires_at <= ?
         """,
         STATUS_ACTIVE,
+        STATUS_CONSUMED,
         now,
     )
     count = 0
     for row in rows:
+        expected_status = row["status"]
         await _safe_delete_r2(env, row["r2_key"])
         results = await batch(
             env,
@@ -45,7 +48,10 @@ async def expire_active_files(env, now: int) -> int:
                           AND expires_at IS NOT NULL AND expires_at <= ?
                     )
                     """,
-                    (int(row["size_bytes"] or 0), now, row["user_id"], row["id"], row["user_id"], STATUS_ACTIVE, now),
+                    (
+                        int(row["size_bytes"] or 0), now, row["user_id"], row["id"],
+                        row["user_id"], expected_status, now,
+                    ),
                 ),
                 (
                     """
@@ -53,7 +59,7 @@ async def expire_active_files(env, now: int) -> int:
                     WHERE id = ? AND status = ? AND expires_at IS NOT NULL AND expires_at <= ?
                       AND changes() = 1
                     """,
-                    (STATUS_EXPIRED, now, row["id"], STATUS_ACTIVE, now),
+                    (STATUS_EXPIRED, now, row["id"], expected_status, now),
                 ),
             ],
         )
@@ -126,7 +132,7 @@ async def purge_deleted_objects(env) -> int:
 
 async def run_cleanup(env) -> dict:
     now = now_ts()
-    expired = await expire_active_files(env, now)
+    expired = await expire_due_files(env, now)
     stale = await fail_stale_pending(env, now)
     purged = await purge_deleted_objects(env)
     await execute(env, "DELETE FROM sessions WHERE expires_at <= ?", now)

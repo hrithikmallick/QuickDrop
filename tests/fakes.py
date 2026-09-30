@@ -38,8 +38,8 @@ class FakeD1:
 
     def execute(self, sql: str, params):
         sql_u = sql.upper()
-        if sql_u.startswith("UPDATE FILES") and "SET EXPIRES_AT = ?" in sql_u:
-            expires_at, now, file_id, expected, token_hash, cutoff = params
+        if sql_u.startswith("UPDATE FILES") and "SET STATUS = ?, EXPIRES_AT = ?" in sql_u:
+            status, expires_at, now, file_id, expected, token_hash, cutoff = params
             row = self.files.get(file_id)
             if (
                 row
@@ -47,18 +47,19 @@ class FakeD1:
                 and row.get("share_token_hash") == token_hash
                 and (row.get("expires_at") is None or row["expires_at"] > cutoff)
             ):
+                row["status"] = status
                 row["expires_at"] = expires_at
                 row["share_token_hash"] = None
                 row["updated_at"] = now
                 return [row]
             return []
         if sql_u.startswith("SELECT ID, USER_ID, SIZE_BYTES, R2_KEY"):
-            if "STATUS = ?" in sql_u and "EXPIRES_AT" in sql_u:
-                status, cutoff = params
+            if "STATUS IN (?, ?)" in sql_u and "EXPIRES_AT" in sql_u:
+                first_status, second_status, cutoff = params
                 return [
                     row
                     for row in self.files.values()
-                    if row["status"] == status
+                    if row["status"] in (first_status, second_status)
                     and row.get("expires_at") is not None
                     and row["expires_at"] <= cutoff
                 ]
