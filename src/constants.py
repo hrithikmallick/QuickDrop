@@ -1,0 +1,27 @@
+QUOTA_BYTES = 500 * 1024 * 1024
+MAX_FILE_BYTES = 500 * 1024 * 1024
+LOCAL_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+PENDING_TTL_SECONDS = 60 * 60
+SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
+SIGNED_PUT_TTL_SECONDS = 15 * 60
+SIGNED_GET_TTL_SECONDS = 5 * 60
+ONE_TIME_GET_TTL_SECONDS = 60
+DEFAULT_EXPIRY = "24h"
+SESSION_COOKIE = "qd_session"
+OAUTH_STATE_COOKIE = "qd_oauth_state"
+EXPIRY_SECONDS = {
+    "1h": 60 * 60,
+    "6h": 6 * 60 * 60,
+    "24h": 24 * 60 * 60,
+    "3d": 3 * 24 * 60 * 60,
+    "7d": 7 * 24 * 60 * 60,
+}
+STATUS_PENDING = "PENDING"
+STATUS_ACTIVE = "ACTIVE"
+STATUS_EXPIRED = "EXPIRED"
+STATUS_DELETED = "DELETED"
+STATUS_FAILED = "FAILED"
+
+
+def quota_allows(used: int, reserved: int, extra: int) -> bool:
+    return used + reserved + extra <= QUOTA_BYTES

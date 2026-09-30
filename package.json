@@ -1,0 +1,9 @@
+{
+  "name": "quickdrop",
+  "private": true,
+  "scripts": {
+    "dev:web": "npm --prefix frontend run dev",
+    "build:web": "npm --prefix frontend run build",
+    "test": "uv run pytest"
+  }
+}

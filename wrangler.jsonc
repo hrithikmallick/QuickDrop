@@ -1,0 +1,90 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "quickdrop",
+  "main": "src/worker.py",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["python_workers"],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "APP_ORIGIN": "https://quickdrop-production.hrithikmallick-work.workers.dev",
+    "R2_ACCOUNT_ID": "0f15c91c52410529ee56582afb1c5d26",
+    "R2_BUCKET_NAME": "quickdrop-files"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "quickdrop",
+      "database_id": "df169518-06cc-4ff7-a444-914f208fcafb",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "quickdrop-files"
+    }
+  ],
+  "assets": {
+    "directory": "./frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/d/*"]
+  },
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
+  },
+  "env": {
+    "development": {
+      "vars": {
+        "ENVIRONMENT": "development"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "quickdrop",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "quickdrop-files"
+        }
+      ]
+    },
+    "production": {
+      "vars": {
+        "ENVIRONMENT": "production",
+        "APP_ORIGIN": "https://quickdrop-production.hrithikmallick-work.workers.dev",
+        "R2_ACCOUNT_ID": "0f15c91c52410529ee56582afb1c5d26",
+        "R2_BUCKET_NAME": "quickdrop-files"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "quickdrop",
+          "database_id": "df169518-06cc-4ff7-a444-914f208fcafb",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "quickdrop-files"
+        }
+      ]
+    }
+  }
+}
